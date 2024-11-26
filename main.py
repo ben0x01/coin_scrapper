@@ -1,11 +1,10 @@
 import asyncio
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config import BINGX_API_KEY, BINGX_SECRET_KEY, API_HASH, API_ID, MEXC_API_KEY, MEXC_SECRET_KEY, CHANELLE_ID
 from data.api_urls import BINGX_API_URL
-from data.networks import ChainMapping, InchChainMapping
+from data.networks import DextoolsMapping, InchChainMapping, CoingeckoMapping, DefilamaMapping
 from src.bid_ask import BidAsk
 from src.dexes import coingecko, defilama_swap, dextools, fetch_token_data, inch, dextools_price
 from src.exchange.gate_exchange import GateIOExchange
@@ -25,10 +24,11 @@ if sys.platform.startswith('win'):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 helper = Helper(BINGX_API_KEY, BINGX_SECRET_KEY, BINGX_API_URL)
-chain_mapping = ChainMapping()
+dextools_mapping = DextoolsMapping()
+coingecko_mapping = CoingeckoMapping()
+defilama_mapping = DefilamaMapping()
 inch_mapping = InchChainMapping()
 
-# Инициализация экземпляров бирж
 gateio_exchange = GateIOExchange()
 kucoin_exchange = KuCoinExchange()
 mexc_exchange = MEXCExchange(MEXC_API_KEY, MEXC_SECRET_KEY)
@@ -39,22 +39,16 @@ bitget_exchange = BitgetExchange()
 xt_exchange = XTExchange()
 bingx_exchange = BingXExchange()
 
-# Инициализация Telegram клиента
 telegram_client = Telegram(API_ID, API_HASH, "session")
 
-# Инициализация логгера
 logger = Logger("Main")
 
-# Инициализация BidAsk
 bid_ask = BidAsk(logger)
 
-# Словарь экземпляров бирж
 exchange_instances = {
     'huobi': huobi_exchange,
     'kucoin': kucoin_exchange,
-    'mexc': mexc_exchange,
     'bitget': bitget_exchange,
-    'bingx': bingx_exchange,
     'gateio': gateio_exchange,
     'coinex': coinex_exchange,
     'bitmart': bitmart_exchange,
@@ -92,11 +86,10 @@ def extract_project_links(pair):
     return project_website, project_twitter, project_telegram
 
 async def process_single_pair(pair, seen_tokens):
-    # Извлекаем необходимые данные из пары
     price_change_m5 = pair.get('priceChange', {}).get('m5')
     price_change_h1 = pair.get('priceChange', {}).get('h1')
     if price_change_m5 is None or price_change_h1 is None:
-        return  # Пропускаем, если данные об изменении цены недоступны
+        return  
 
     symbol = pair['baseToken']['symbol']
     quote_symbol = pair['quoteToken']['symbol']
@@ -149,10 +142,10 @@ async def process_token(pair, seen_tokens, solana=False):
     fall_emoji = "🔥" if price_change_m5 < -40 else ""
     low_liquidity_emoji = "🚨" if liquidity < 300000 else "🔥"
 
-    dextools_link = await dextools(pair_address, chain_id, chain_mapping)
+    dextools_link = await dextools(pair_address, chain_id, dextools_mapping)
     dextools_link = f" | <a href='{dextools_link}'>Tools</a>" if dextools_link else ""
 
-    defilama_link = await defilama_swap(base_token_contract, chain_id, chain_mapping)
+    defilama_link = await defilama_swap(base_token_contract, chain_id, defilama_mapping)
     defilama_link = f" | <a href='{defilama_link}'>DefiLama</a>" if defilama_link else ""
 
     inch_link = await inch(base_token_contract, chain_id, inch_mapping)
@@ -165,8 +158,8 @@ async def process_token(pair, seen_tokens, solana=False):
     token_slug = await helper.coinmarketcap(base_token_contract)
     coinmarketcap_link = f" | <a href='https://coinmarketcap.com/currencies/{token_slug}/'>CMC</a>" if token_slug else ""
 
-    coingecko_info = await coingecko(base_token_contract, chain_id, chain_mapping)
-    time.sleep(2)
+    coingecko_info = await coingecko(base_token_contract, chain_id, coingecko_mapping)
+    await asyncio.sleep(2)
 
     print(f"Pair: {symbol}/{quote_symbol}, Price: {price}, Liquidity Token: {formatted_token_liquidity}, Native Liquidity: {formatted_native_liquidity}")
 
@@ -231,12 +224,10 @@ async def process_token(pair, seen_tokens, solana=False):
             gecko_info_text = "\n".join(gecko_info_lines)
             message_text += f"<blockquote>{gecko_info_text}</blockquote>\n"
 
-    # Решаем, отправлять ли сообщение в Telegram на основе ликвидности и других условий
     if native_liquidity > 15000 and token_liquidity > 15000 and dex_id != 'balancer' and dex_id != 'dedust':
-        # Для токенов Solana проверяем изменение цены с Dextools
         if solana:
             dextools_data = await dextools_price(base_token_contract)
-            time.sleep(2)
+            await asyncio.sleep(2)
             if dextools_data:
                 price_change_5m_tools, price_change_1h_tools = dextools_data
                 if (helper.is_within_20_percent(price_change_m5, price_change_5m_tools) and
@@ -249,17 +240,17 @@ async def process_token(pair, seen_tokens, solana=False):
                 print("Error retrieving data from Dextools.")
                 return
         else:
-            # Для остальных токенов отправляем сообщение напрямую
             message_id = await telegram_client.send_telegram_message(message_text, base_token_contract, CHANELLE_ID)
 
-        # Сохраняем message_id и base_token_contract
-        with open('messages.txt', 'a', encoding='utf-8') as file:
-            file.write(f"{message_id} {base_token_contract}\n")
+        if message_id is not None:
+            with open('messages.txt', 'a', encoding='utf-8') as file:
+                file.write(f"{message_id} {base_token_contract}\n")
+        else:
+            print(f"Message not sent for contract: {base_token_contract}")
+            return
 
-        # Получаем информацию о депозитах и биржах с активными депозитами
         deposits_info, exchanges_with_deposits = await get_deposits_info(base_token_contract)
 
-        # Получаем информацию о бид/аск
         bids_and_asks_info = await get_bids_and_asks_info(exchanges_with_deposits, price)
 
         if deposits_info:
@@ -272,7 +263,7 @@ async def process_token(pair, seen_tokens, solana=False):
 
             try:
                 if message_id is not None:
-                    await telegram_client.update_telegram_message(message_id, updated_message_text, -1002045188654)
+                    await telegram_client.update_telegram_message(message_id, updated_message_text, CHANELLE_ID)
                 else:
                     print("Message ID is None")
                     with open('errors.txt', 'a', encoding='utf-8') as file:
@@ -286,9 +277,7 @@ async def get_deposits_info(base_token_contract):
     # Получаем информацию о депозитах с бирж
     htx_deposit_info = await huobi_exchange.check_deposit_status(base_token_contract)
     kucoin_deposit_info = await kucoin_exchange.check_deposit_status(base_token_contract)
-    mexc_deposit_info = await mexc_exchange.check_deposit_status(base_token_contract)
     bitget_deposit_info = await bitget_exchange.check_deposit_status(base_token_contract)
-    bingx_deposit_info = await bingx_exchange.check_deposit_status(base_token_contract)
     gateio_deposit_info = await gateio_exchange.check_deposit_status(base_token_contract)
     bitmart_deposit_info = await bitmart_exchange.check_deposit_status(base_token_contract)
     coinex_deposit_info = await coinex_exchange.check_deposit_status(base_token_contract)
@@ -303,9 +292,7 @@ async def get_deposits_info(base_token_contract):
     for exchange_name, deposit_info, exchange_key in [
         ('HTX', htx_deposit_info, 'huobi'),
         ('KuCoin', kucoin_deposit_info, 'kucoin'),
-        ('MEXC', mexc_deposit_info, 'mexc'),
         ('Bitget', bitget_deposit_info, 'bitget'),
-        ('BingX', bingx_deposit_info, 'bingx'),
         ('Gate.io', gateio_deposit_info, 'gateio'),
         ('CoinEx', coinex_deposit_info, 'coinex'),
         ('BitMart', bitmart_deposit_info, 'bitmart'),
@@ -325,10 +312,18 @@ async def get_deposits_info(base_token_contract):
 async def get_bids_and_asks_info(exchanges_with_deposits, price):
     bids_and_asks_info = ""
     for exchange_instance, coin_symbol in exchanges_with_deposits:
+        exchange_name = next((name for name, instance in exchange_instances.items() if instance == exchange_instance), None)
+
+        if not exchange_name:
+            print(f"Exchange instance {exchange_instance} does not have a corresponding name in the dictionary.")
+            continue
+
         market_symbol = f"{coin_symbol}/USDT"
-        info = await bid_ask.get_bids_and_asks_info_for_exchange(exchange_instance, market_symbol, price)
+        info = await bid_ask.get_bids_and_asks_info_for_exchange(exchange_name, market_symbol.upper(), price)
         if info:
             bids_and_asks_info += info
+        print("bids_and_asks_info", bids_and_asks_info)
+
     return bids_and_asks_info
 
 async def process_pairs(pairs):
@@ -350,41 +345,34 @@ async def process_tokens(file_path):
 
         while True:
             start_time = time.time()
+            futures = []
+            for i in range(0, len(token_addresses), batch_size):
+                batch = token_addresses[i:i + batch_size]
+                futures.append(fetch_token_data(batch))
 
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = []
-                for i in range(0, len(token_addresses), batch_size):
-                    batch = token_addresses[i:i + batch_size]
-                    futures.append(executor.submit(fetch_token_data, batch))
+            results = await asyncio.gather(*futures)
 
-                    # Ожидаем между пакетами, чтобы не превысить лимиты
-                    if len(futures) >= max_requests_per_minute:
-                        for future in as_completed(futures):
-                            result = future.result()
-                            if result and 'pairs' in result:
-                                await process_pairs(result['pairs'])
-                        futures = []
-                        elapsed_time = time.time() - start_time
-                        if elapsed_time < delay_between_batches:
-                            time.sleep(delay_between_batches - elapsed_time)
-                        start_time = time.time()
+            for result in results:
+                if result and 'pairs' in result:
+                    await process_pairs(result['pairs'])
 
-                for future in as_completed(futures):
-                    result = future.result()
-                    if result and 'pairs' in result:
-                        await process_pairs(result['pairs'])
+            elapsed_time = time.time() - start_time
+            if elapsed_time < delay_between_batches:
+                await asyncio.sleep(delay_between_batches - elapsed_time)
 
             print("Sleeping for 60 seconds...")
-            time.sleep(65)
+            await asyncio.sleep(65)
             print("Waking up...")
+
     except Exception as e:
         with open('errors.txt', 'a', encoding='utf-8') as file:
             file.write(f"Error: {str(e)}\n")
             print(f"Error results {str(e)}")
 
-def main():
-    file_path = 'valid_exchanges.txt'
-    asyncio.run(process_tokens(file_path))
+async def main():
+    file_path = 'valid_exchanges.py.txt'
+    await telegram_client.sign_in()
+    await process_tokens(file_path)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
