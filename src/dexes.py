@@ -1,24 +1,16 @@
 import asyncio
-import sys
 import aiohttp
 import itertools
 
 from typing import Optional, Any, List, Tuple
 
 from src.logger import Logger
-from data.networks import ChainMapping, InchChainMapping
+from data.networks import DextoolsMapping, InchChainMapping, CoingeckoMapping, DefilamaMapping
 
-if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-
-inch_chain_mapping = InchChainMapping()
-
-log = Logger(name="Dex Module", log_file="main.log").get_logger()
+log = Logger(name="Dex Module", log_file="dex.log").get_logger()
 
 
-
-async def dextools(pair_address_tools: str, chain_id: str, mapping: ChainMapping) -> Optional[str]:
+async def dextools(pair_address_tools: str, chain_id: str, mapping: DextoolsMapping) -> Optional[str]:
     try:
         chain_key = mapping.get_chain_key(chain_id)
         if chain_key is None:
@@ -32,7 +24,7 @@ async def dextools(pair_address_tools: str, chain_id: str, mapping: ChainMapping
         return None
 
 
-async def defilama_swap(base_token_contract: str, chain_id: str, mapping: ChainMapping) -> Optional[str]:
+async def defilama_swap(base_token_contract: str, chain_id: str, mapping: DefilamaMapping) -> Optional[str]:
     try:
         chain_key = mapping.get_chain_key(chain_id)
         if chain_key is None:
@@ -46,7 +38,7 @@ async def defilama_swap(base_token_contract: str, chain_id: str, mapping: ChainM
         return None
 
 
-async def coingecko(base_token_contract: str, chain_id: str, mapping: ChainMapping) -> list[dict[
+async def coingecko(base_token_contract: str, chain_id: str, mapping: CoingeckoMapping) -> list[dict[
     str, dict[Any, Any] | Any]] | None:
     try:
         chain_key = mapping.get_chain_key(chain_id)
@@ -126,7 +118,6 @@ async def fetch_token_data(token_addresses: List[str]) -> Optional[dict]:
         except Exception as e:
             log.error(f"Unexpected error: {str(e)}")
             return None
-
 
 
 async def dextools_price(base_token_address: str) -> Optional[Tuple[float, float]]:
