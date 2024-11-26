@@ -83,7 +83,7 @@ class Helper:
             url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/info"
             headers = {
                 "Accepts": "application/json",
-                "X-CMC_PRO_API_KEY": "f7f556e6-e244-4195-bb67-d7eeeee0b6ae"
+                "X-CMC_PRO_API_KEY": "477d1e8b-9797-4de7-99ac-7c2e0dff6f64"
             }
             params = {
                 "address": base_token_contract
