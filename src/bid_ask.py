@@ -24,7 +24,7 @@ class BidAsk:
                 bids = order_book.get('bids', [])[:3]
                 return bids
             finally:
-                await exchange_instance.close()  # Ensure the instance is closed
+                await exchange_instance.close()
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Error fetching order book from {exchange_name}: {e}")
