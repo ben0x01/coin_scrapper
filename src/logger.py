@@ -1,13 +1,12 @@
 import logging
 from logging.handlers import RotatingFileHandler
 
-
 class Logger:
     def __init__(self, name: str, log_file: str = "app.log", level: int = logging.INFO):
         self.logger = logging.getLogger(name)
         self.logger.setLevel(level)
 
-        file_handler = RotatingFileHandler(log_file, maxBytes=10 ** 6)
+        file_handler = RotatingFileHandler(log_file, maxBytes=10**6, encoding='utf-8')
         file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
         console_handler = logging.StreamHandler()
