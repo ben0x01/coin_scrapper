@@ -97,7 +97,6 @@ class Helper:
 
                     otvet = await response.json()
                     token_id = list(otvet['data'].keys())[0]
-                    print(f'Token ID: {token_id}')
 
             url_get_slug = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency/info'
             parameters_get_slug = {
@@ -112,7 +111,6 @@ class Helper:
 
                     dannye = await response.json()
                     token_slug = dannye['data'][str(token_id)]['slug']
-                    print(f'Token slug: {token_slug}')
                     return token_slug
         except Exception as e:
             self.log.error(f'Error in coinmarketcap: {e}')
