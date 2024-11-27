@@ -29,6 +29,7 @@ coingecko_mapping = CoingeckoMapping()
 defilama_mapping = DefilamaMapping()
 inch_mapping = InchChainMapping()
 
+# Initialize exchange instances
 gateio_exchange = GateIOExchange()
 kucoin_exchange = KuCoinExchange()
 mexc_exchange = MEXCExchange(MEXC_API_KEY, MEXC_SECRET_KEY)
@@ -39,12 +40,16 @@ bitget_exchange = BitgetExchange()
 xt_exchange = XTExchange()
 bingx_exchange = BingXExchange()
 
+# Initialize Telegram client
 telegram_client = Telegram(API_ID, API_HASH, "session")
 
-logger = Logger("Main")
+# Initialize Logger
+logger = Logger("Main").get_logger()
 
+# Initialize BidAsk
 bid_ask = BidAsk(logger)
 
+# Exchange instances dictionary
 exchange_instances = {
     'huobi': huobi_exchange,
     'kucoin': kucoin_exchange,
@@ -55,6 +60,7 @@ exchange_instances = {
     'xt': xt_exchange,
 }
 
+
 def format_liquidity(liquidity_value):
     if liquidity_value >= 1e6:
         return "{:.1f}M".format(liquidity_value / 1e6)
@@ -62,6 +68,7 @@ def format_liquidity(liquidity_value):
         return "{:.1f}k".format(liquidity_value / 1e3)
     else:
         return "{:.0f}".format(liquidity_value)
+
 
 def extract_project_links(pair):
     project_website = None
@@ -85,11 +92,13 @@ def extract_project_links(pair):
 
     return project_website, project_twitter, project_telegram
 
+
 async def process_single_pair(pair, seen_tokens):
+    # Extract necessary data from the pair
     price_change_m5 = pair.get('priceChange', {}).get('m5')
     price_change_h1 = pair.get('priceChange', {}).get('h1')
     if price_change_m5 is None or price_change_h1 is None:
-        return  
+        return  # Skip if price change data is not available
 
     symbol = pair['baseToken']['symbol']
     quote_symbol = pair['quoteToken']['symbol']
@@ -97,8 +106,6 @@ async def process_single_pair(pair, seen_tokens):
     liquidity = float(pair.get('liquidity', {}).get('usd', 0))
     liquidity_base = float(pair.get('liquidity', {}).get('base', 0))
     base_token_contract = pair['baseToken']['address']
-    quote_token_contract = pair['quoteToken']['address']
-    pair_address = pair['pairAddress']
     dex_id = pair.get('dexId')
     chain_id = pair.get('chainId')
     link = pair['url']
@@ -106,13 +113,14 @@ async def process_single_pair(pair, seen_tokens):
     project_website, project_twitter, project_telegram = extract_project_links(pair)
 
     if ((price_change_m5 < -1 or price_change_h1 < -50) and
-        (symbol, quote_symbol) not in seen_tokens and
-        chain_id != 'solana' and dex_id != 'dedust'):
+            (symbol, quote_symbol) not in seen_tokens and
+            chain_id != 'solana' and dex_id != 'dedust'):
         await process_token(pair, seen_tokens)
     elif ((price_change_m5 < -40 or price_change_h1 < -50) and
           (symbol, quote_symbol) not in seen_tokens and
           chain_id == 'solana'):
         await process_token(pair, seen_tokens, solana=True)
+
 
 async def process_token(pair, seen_tokens, solana=False):
     price_change_m5 = pair['priceChange']['m5']
@@ -123,7 +131,6 @@ async def process_token(pair, seen_tokens, solana=False):
     liquidity = float(pair.get('liquidity', {}).get('usd', 0))
     liquidity_base = float(pair.get('liquidity', {}).get('base', 0))
     base_token_contract = pair['baseToken']['address']
-    pair_address = pair['pairAddress']
     dex_id = pair.get('dexId')
     chain_id = pair.get('chainId')
     link = pair['url']
@@ -142,7 +149,7 @@ async def process_token(pair, seen_tokens, solana=False):
     fall_emoji = "🔥" if price_change_m5 < -40 else ""
     low_liquidity_emoji = "🚨" if liquidity < 300000 else "🔥"
 
-    dextools_link = await dextools(pair_address, chain_id, dextools_mapping)
+    dextools_link = await dextools(pair['pairAddress'], chain_id, dextools_mapping)
     dextools_link = f" | <a href='{dextools_link}'>Tools</a>" if dextools_link else ""
 
     defilama_link = await defilama_swap(base_token_contract, chain_id, defilama_mapping)
@@ -161,7 +168,8 @@ async def process_token(pair, seen_tokens, solana=False):
     coingecko_info = await coingecko(base_token_contract, chain_id, coingecko_mapping)
     await asyncio.sleep(2)
 
-    print(f"Pair: {symbol}/{quote_symbol}, Price: {price}, Liquidity Token: {formatted_token_liquidity}, Native Liquidity: {formatted_native_liquidity}")
+    logger.info(
+        f"Pair: {symbol}/{quote_symbol}, Price: {price}, Liquidity Token: {formatted_token_liquidity}, Native Liquidity: {formatted_native_liquidity}")
 
     message_text = (
         f"<code>{symbol}</code> / {price_change_m5}% 5m / {price_change_h1}% 1h ⚡️🔻{fall_emoji}\n\n"
@@ -206,9 +214,11 @@ async def process_token(pair, seen_tokens, solana=False):
         exchange_width = 8
         info_lines = 0
         for info in coingecko_info:
-            if info_lines >= 10:
-                break
-            market_name, converted_last_usd, _, trade_url, _, _, _ = info
+            try:
+                market_name, converted_last_usd, _, trade_url, _, _, _ = info
+            except ValueError:
+                continue  # Skip if the unpacking fails
+
             market_name_cut = market_name[:exchange_width].ljust(exchange_width)
             spread_gecko = ((float(converted_last_usd) - price) / float(converted_last_usd)) * 100
             if market_name in valid_exchanges:
@@ -224,33 +234,39 @@ async def process_token(pair, seen_tokens, solana=False):
             gecko_info_text = "\n".join(gecko_info_lines)
             message_text += f"<blockquote>{gecko_info_text}</blockquote>\n"
 
+    # Decide whether to send the message to Telegram based on liquidity and other conditions
     if native_liquidity > 15000 and token_liquidity > 15000 and dex_id != 'balancer' and dex_id != 'dedust':
+        # For Solana tokens, check price change with Dextools
         if solana:
             dextools_data = await dextools_price(base_token_contract)
             await asyncio.sleep(2)
             if dextools_data:
                 price_change_5m_tools, price_change_1h_tools = dextools_data
                 if (helper.is_within_20_percent(price_change_m5, price_change_5m_tools) and
-                    helper.is_within_20_percent(price_change_h1, price_change_1h_tools)):
-                    message_id = await telegram_client.send_telegram_message(message_text, base_token_contract, CHANELLE_ID)
+                        helper.is_within_20_percent(price_change_h1, price_change_1h_tools)):
+                    message_id = await telegram_client.send_telegram_message(message_text, base_token_contract,
+                                                                             CHANELLE_ID)
                 else:
-                    print("Price changes differ by more than 20% - not sending message.")
+                    logger.info("Price changes differ by more than 20% - not sending message.")
                     return
             else:
-                print("Error retrieving data from Dextools.")
+                logger.warning("Error retrieving data from Dextools.")
                 return
         else:
+            # For other tokens, send the message directly
             message_id = await telegram_client.send_telegram_message(message_text, base_token_contract, CHANELLE_ID)
 
+        # Save message_id and base_token_contract
         if message_id is not None:
-            with open('messages.txt', 'a', encoding='utf-8') as file:
-                file.write(f"{message_id} {base_token_contract}\n")
+            logger.error(f"{message_id} {base_token_contract}\n")
         else:
-            print(f"Message not sent for contract: {base_token_contract}")
+            logger.info(f"Message not sent for contract: {base_token_contract}")
             return
 
+        # Get deposit information and exchanges with active deposits
         deposits_info, exchanges_with_deposits = await get_deposits_info(base_token_contract)
 
+        # Get bid/ask information
         bids_and_asks_info = await get_bids_and_asks_info(exchanges_with_deposits, price)
 
         if deposits_info:
@@ -265,16 +281,12 @@ async def process_token(pair, seen_tokens, solana=False):
                 if message_id is not None:
                     await telegram_client.update_telegram_message(message_id, updated_message_text, CHANELLE_ID)
                 else:
-                    print("Message ID is None")
-                    with open('errors.txt', 'a', encoding='utf-8') as file:
-                        file.write(f"Message ID is None for coin: {base_token_contract}\n")
+                    logger.error(f"Message ID is None for coin: {base_token_contract}\n")
             except Exception as e:
-                with open('errors.txt', 'a', encoding='utf-8') as file:
-                    file.write(f"Error: {str(e)}\n")
-                    print(f"Error results {str(e)}")
+                logger.error(f"Error: {str(e)}\n")
+
 
 async def get_deposits_info(base_token_contract):
-    # Получаем информацию о депозитах с бирж
     htx_deposit_info = await huobi_exchange.check_deposit_status(base_token_contract)
     kucoin_deposit_info = await kucoin_exchange.check_deposit_status(base_token_contract)
     bitget_deposit_info = await bitget_exchange.check_deposit_status(base_token_contract)
@@ -309,22 +321,25 @@ async def get_deposits_info(base_token_contract):
 
     return deposits_info, exchanges_with_deposits
 
+
 async def get_bids_and_asks_info(exchanges_with_deposits, price):
     bids_and_asks_info = ""
     for exchange_instance, coin_symbol in exchanges_with_deposits:
-        exchange_name = next((name for name, instance in exchange_instances.items() if instance == exchange_instance), None)
+        exchange_name = next((name for name, instance in exchange_instances.items() if instance == exchange_instance),
+                             None)
 
         if not exchange_name:
-            print(f"Exchange instance {exchange_instance} does not have a corresponding name in the dictionary.")
+            logger.warning(f"Exchange instance {exchange_instance} does not have a corresponding name in the dictionary.")
             continue
 
         market_symbol = f"{coin_symbol}/USDT"
         info = await bid_ask.get_bids_and_asks_info_for_exchange(exchange_name, market_symbol.upper(), price)
         if info:
             bids_and_asks_info += info
-        print("bids_and_asks_info", bids_and_asks_info)
+        logger.info("bids_and_asks_info", bids_and_asks_info)
 
     return bids_and_asks_info
+
 
 async def process_pairs(pairs):
     seen_tokens = set()
@@ -332,9 +347,8 @@ async def process_pairs(pairs):
         for pair in pairs:
             await process_single_pair(pair, seen_tokens)
     except Exception as e:
-        with open('errors.txt', 'a', encoding='utf-8') as file:
-            file.write(f"Error: {str(e)}\n")
-            print(f"Error results {str(e)}")
+        logger.error(f"Error results {str(e)}")
+
 
 async def process_tokens(file_path):
     try:
@@ -360,19 +374,19 @@ async def process_tokens(file_path):
             if elapsed_time < delay_between_batches:
                 await asyncio.sleep(delay_between_batches - elapsed_time)
 
-            print("Sleeping for 60 seconds...")
+            logger.info("Sleeping for 60 seconds...")
             await asyncio.sleep(65)
-            print("Waking up...")
+            logger.info("Waking up...")
 
     except Exception as e:
-        with open('errors.txt', 'a', encoding='utf-8') as file:
-            file.write(f"Error: {str(e)}\n")
-            print(f"Error results {str(e)}")
+        logger.error(f"Error results {str(e)}")
+
 
 async def main():
     file_path = 'valid_exchanges.py.txt'
     await telegram_client.sign_in()
     await process_tokens(file_path)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
