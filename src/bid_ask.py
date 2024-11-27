@@ -10,7 +10,7 @@ if sys.platform.startswith('win'):
 
 class BidAsk:
     def __init__(self, logger: Logger = None) -> None:
-        self.logger = logger.get_logger() if logger else None
+        self.logger = logger if logger else None
 
     async def get_order_book(self, exchange_name: str, symbol: str) -> List[Tuple[float, float]]:
         try:
@@ -24,7 +24,7 @@ class BidAsk:
                 bids = order_book.get('bids', [])[:3]
                 return bids
             finally:
-                await exchange_instance.close()
+                await exchange_instance.close()  # Ensure the instance is closed
         except Exception as e:
             if self.logger:
                 self.logger.error(f"Error fetching order book from {exchange_name}: {e}")
